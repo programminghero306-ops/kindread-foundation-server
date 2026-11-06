@@ -257,6 +257,7 @@ async function run() {
     const auth = betterAuth({
       database: mongodbAdapter(db),
       baseURL: publicBaseUrl,
+      secret: process.env.BETTER_AUTH_SECRET || process.env.JWT_SECRET,
       emailAndPassword: {
         enabled: true,
       },
