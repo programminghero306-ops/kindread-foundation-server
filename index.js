@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 const requiredEnv = ["MONGODB_URI", "JWT_SECRET"];
@@ -41,6 +42,27 @@ const normalizeEmail = (value) =>
 
 const getTokenEmail = (decoded) =>
   normalizeEmail(decoded?.email || decoded?.userEmail || decoded?.user?.email);
+
+const isValidEmail = (value) =>
+  typeof value === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+
+const publicUser = (user) => ({
+  _id: user._id,
+  name: user.name,
+  email: user.email,
+  photoURL: user.photoURL || "",
+});
+
+const createToken = (user) =>
+  jwt.sign(
+    {
+      sub: String(user._id),
+      email: normalizeEmail(user.email),
+      name: user.name,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
+  );
 
 // Today's date as "YYYY-MM-DD" in Bangladesh time
 const getToday = () =>
@@ -190,7 +212,9 @@ async function run() {
     const db = client.db(dbName);
     const eventsCollection = db.collection("events");
     const joinedEventsCollection = db.collection("joinedEvents");
+    const usersCollection = db.collection("users");
 
+    await usersCollection.createIndex({ email: 1 }, { unique: true });
     await eventsCollection.createIndex({ eventDate: 1 });
     await eventsCollection.createIndex({ creatorEmail: 1 });
 
@@ -207,6 +231,150 @@ async function run() {
     app.get("/health", async (req, res) => {
       await db.command({ ping: 1 });
       res.send({ status: "ok", database: "connected" });
+    });
+
+    // ---------- Auth routes ----------
+
+    // Register a new account
+    app.post("/auth/register", async (req, res) => {
+      const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+      const email = normalizeEmail(req.body?.email);
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+      const photoURL =
+        typeof req.body?.photoURL === "string" ? req.body.photoURL.trim() : "";
+
+      if (!name) return res.status(400).send({ message: "name is required" });
+      if (!isValidEmail(email)) {
+        return res.status(400).send({ message: "A valid email is required" });
+      }
+      if (password.length < 8) {
+        return res
+          .status(400)
+          .send({ message: "password must be at least 8 characters" });
+      }
+
+      const existing = await usersCollection.findOne({ email });
+      if (existing) {
+        return res
+          .status(409)
+          .send({ message: "An account with this email already exists" });
+      }
+
+      const passwordHash = await bcrypt.hash(password, 10);
+      const user = {
+        name,
+        email,
+        passwordHash,
+        photoURL,
+        createdAt: new Date(),
+      };
+
+      try {
+        const result = await usersCollection.insertOne(user);
+        const savedUser = { ...user, _id: result.insertedId };
+        return res.status(201).send({
+          token: createToken(savedUser),
+          user: publicUser(savedUser),
+        });
+      } catch (error) {
+        if (error.code === 11000) {
+          return res
+            .status(409)
+            .send({ message: "An account with this email already exists" });
+        }
+        throw error;
+      }
+    });
+
+    // Log in with email and password
+    app.post("/auth/login", async (req, res) => {
+      const email = normalizeEmail(req.body?.email);
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+
+      if (!isValidEmail(email) || !password) {
+        return res.status(400).send({ message: "email and password are required" });
+      }
+
+      const user = await usersCollection.findOne({ email });
+      const passwordMatches =
+        user?.passwordHash && (await bcrypt.compare(password, user.passwordHash));
+
+      if (!user || !passwordMatches) {
+        return res.status(401).send({ message: "Invalid email or password" });
+      }
+
+      return res.send({
+        token: createToken(user),
+        user: publicUser(user),
+      });
+    });
+
+    // Current user profile
+    app.get("/auth/me", authenticate, async (req, res) => {
+      const user = await usersCollection.findOne({ email: req.user.email });
+      if (!user) return res.status(404).send({ message: "User not found" });
+      res.send({ user: publicUser(user) });
+    });
+
+    // Update current user profile
+    app.patch("/auth/me", authenticate, async (req, res) => {
+      const updates = {};
+      if (req.body?.name !== undefined) {
+        if (!isNonEmptyString(req.body.name)) {
+          return res.status(400).send({ message: "name cannot be empty" });
+        }
+        updates.name = req.body.name.trim();
+      }
+      if (req.body?.photoURL !== undefined) {
+        if (typeof req.body.photoURL !== "string") {
+          return res.status(400).send({ message: "photoURL must be a string" });
+        }
+        updates.photoURL = req.body.photoURL.trim();
+      }
+      if (!Object.keys(updates).length) {
+        return res.status(400).send({ message: "Provide at least one field to update" });
+      }
+
+      updates.updatedAt = new Date();
+      const result = await usersCollection.findOneAndUpdate(
+        { email: req.user.email },
+        { $set: updates },
+        { returnDocument: "after" }
+      );
+      const updatedUser = result?.value ?? result;
+      if (!updatedUser) return res.status(404).send({ message: "User not found" });
+      res.send({ user: publicUser(updatedUser) });
+    });
+
+    // Change current user password
+    app.patch("/auth/password", authenticate, async (req, res) => {
+      const currentPassword =
+        typeof req.body?.currentPassword === "string" ? req.body.currentPassword : "";
+      const newPassword =
+        typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
+
+      if (!currentPassword || newPassword.length < 8) {
+        return res.status(400).send({
+          message: "currentPassword is required and newPassword must be at least 8 characters",
+        });
+      }
+
+      const user = await usersCollection.findOne({ email: req.user.email });
+      if (!user?.passwordHash) {
+        return res.status(404).send({ message: "User not found" });
+      }
+
+      const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+      if (!matches) {
+        return res.status(401).send({ message: "Current password is incorrect" });
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, 10);
+      await usersCollection.updateOne(
+        { _id: user._id },
+        { $set: { passwordHash, updatedAt: new Date() } }
+      );
+      res.send({ message: "Password updated" });
     });
 
     // 1. Create an event (logged-in users only)

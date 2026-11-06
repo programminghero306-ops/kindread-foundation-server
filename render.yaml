@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: kindred-foundation-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: DB_NAME
+        value: kindredDB
+      - key: NODE_VERSION
+        value: 20.19.0
