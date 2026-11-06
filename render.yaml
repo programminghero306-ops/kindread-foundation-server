@@ -3,9 +3,11 @@ services:
     name: kindred-foundation-api
     runtime: node
     plan: free
+    region: singapore
     buildCommand: npm ci
     startCommand: npm start
     healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: MONGODB_URI
         sync: false

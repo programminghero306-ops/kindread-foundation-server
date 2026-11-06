@@ -5,6 +5,8 @@ const helmet = require("helmet");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const { betterAuth } = require("better-auth");
+const { mongodbAdapter } = require("@better-auth/mongo-adapter");
 
 const requiredEnv = ["MONGODB_URI", "JWT_SECRET"];
 const missingEnv = requiredEnv.filter((key) => !process.env[key]);
@@ -23,8 +25,26 @@ const allowedOrigins = (process.env.CLIENT_ORIGIN || "")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+// Public URL of this API. Render exposes RENDER_EXTERNAL_URL automatically.
+const publicBaseUrl =
+  process.env.BETTER_AUTH_URL ||
+  process.env.RENDER_EXTERNAL_URL ||
+  `http://localhost:${port}`;
+
+const trustedOrigins = allowedOrigins.length
+  ? allowedOrigins
+  : ["http://localhost:3000", "http://localhost:5173", publicBaseUrl];
+
+// Render terminates TLS in front of the app, so trust its proxy headers.
+app.set("trust proxy", 1);
 app.use(helmet());
-app.use(cors({ origin: allowedOrigins.length ? allowedOrigins : true }));
+app.use(
+  cors({
+    // Without CLIENT_ORIGIN, reflect the request origin (local development).
+    origin: allowedOrigins.length ? allowedOrigins : true,
+    credentials: true,
+  })
+);
 app.use(express.json({ limit: "100kb" }));
 
 const client = new MongoClient(process.env.MONGODB_URI, {
@@ -233,7 +253,49 @@ async function run() {
       res.send({ status: "ok", database: "connected" });
     });
 
-    // ---------- Auth routes ----------
+    // ---------- Better Auth (exposed at /api/auth) ----------
+    const auth = betterAuth({
+      database: mongodbAdapter(db),
+      baseURL: publicBaseUrl,
+      emailAndPassword: {
+        enabled: true,
+      },
+      trustedOrigins,
+    });
+
+    // Bridge Express requests to Better Auth's Web-standard handler.
+    app.all(/^\/api\/auth/, async (req, res) => {
+      try {
+        const headers = {};
+        Object.entries(req.headers).forEach(([key, value]) => {
+          if (value === undefined) return;
+          if (key === "host" || key === "content-length") return;
+          headers[key] = Array.isArray(value) ? value.join(", ") : String(value);
+        });
+
+        const webRequest = new Request(
+          new URL(req.originalUrl, publicBaseUrl).toString(),
+          {
+            method: req.method,
+            headers,
+            body: ["GET", "HEAD"].includes(req.method)
+              ? undefined
+              : JSON.stringify(req.body ?? {}),
+          }
+        );
+
+        const response = await auth.handler(webRequest);
+
+        res.status(response.status);
+        response.headers.forEach((value, key) => res.setHeader(key, value));
+        res.send(await response.text());
+      } catch (err) {
+        console.error("Auth handler error:", err);
+        res.status(500).send({ message: "Authentication internal error" });
+      }
+    });
+
+    // ---------- JWT auth routes ----------
 
     // Register a new account
     app.post("/auth/register", async (req, res) => {
