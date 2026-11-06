@@ -20,10 +20,20 @@ const port = process.env.PORT || 5000;
 const dbName = process.env.DB_NAME || "kindredDB";
 const TIME_ZONE = process.env.TIME_ZONE || "Asia/Dhaka";
 
-const allowedOrigins = (process.env.CLIENT_ORIGIN || "")
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const defaultFrontendOrigins = [
+  "https://kindred-foundation.vercel.app",
+  "https://kindred-foundation-client.vercel.app",
+];
+
+const allowedOrigins = Array.from(
+  new Set(
+    (process.env.CLIENT_ORIGIN || "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean)
+      .concat(defaultFrontendOrigins)
+  )
+);
 
 // Public URL of this API. Render exposes RENDER_EXTERNAL_URL automatically.
 const publicBaseUrl =
