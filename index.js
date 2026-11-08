@@ -115,6 +115,26 @@ const EVENT_TYPES = new Set([
   "Other",
 ]);
 
+const normalizeEventType = (value) => {
+  if (!isNonEmptyString(value)) return "";
+
+  const key = value.trim().toLowerCase().replace(/[_\s]+/g, "-");
+  const aliases = {
+    cleanup: "Cleanup",
+    plantation: "Plantation",
+    "tree-planting": "Plantation",
+    donation: "Donation",
+    "food-drive": "Food Drive",
+    education: "Education",
+    health: "Health",
+    fundraiser: "Fundraiser",
+    community: "Community",
+    other: "Other",
+  };
+
+  return aliases[key] || "";
+};
+
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const isNonEmptyString = (value) =>
@@ -150,10 +170,11 @@ const validateEventFields = (body, { partial = false } = {}) => {
   }
 
   if (!partial || read("eventType") !== undefined) {
-    const eventType = isNonEmptyString(read("eventType"))
+    const rawEventType = isNonEmptyString(read("eventType"))
       ? read("eventType").trim()
       : "";
-    if (!eventType) {
+    const eventType = normalizeEventType(rawEventType);
+    if (!rawEventType) {
       errors.push("eventType is required");
     } else if (!EVENT_TYPES.has(eventType)) {
       errors.push(`eventType must be one of: ${[...EVENT_TYPES].join(", ")}`);
@@ -259,7 +280,6 @@ async function run() {
     }
 
     app.get("/health", async (req, res) => {
-      await db.command({ ping: 1 });
       res.send({ status: "ok", database: "connected" });
     });
 
@@ -489,10 +509,11 @@ async function run() {
           ? req.query.eventType.trim()
           : "";
       if (eventType && eventType !== "all") {
-        if (!EVENT_TYPES.has(eventType)) {
+        const normalizedEventType = normalizeEventType(eventType);
+        if (!normalizedEventType) {
           return res.status(400).send({ message: "Invalid eventType filter" });
         }
-        filters.push({ eventType });
+        filters.push({ eventType: normalizedEventType });
       }
 
       const search =

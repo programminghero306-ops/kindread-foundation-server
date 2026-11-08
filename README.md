@@ -158,7 +158,7 @@ Invoke-RestMethod -Method Patch -Uri "$base/auth/password" `
 | POST | `/events` | Yes | Creates an event |
 | GET | `/events` | No | Upcoming events, sorted by date |
 | GET | `/events?limit=6` | No | Home page limit |
-| GET | `/events?eventType=cleanup` | No | Filter by event type |
+| GET | `/events?eventType=Cleanup` | No | Filter by event type |
 | GET | `/events?search=park` | No | Search title/description/location/type |
 | GET | `/events/:id` | No | One event |
 | PUT | `/events/:id` | Yes | Creator only |
@@ -168,9 +168,11 @@ Invoke-RestMethod -Method Patch -Uri "$base/auth/password" `
 | DELETE | `/joined-events/:id` | Yes | Leave an event (joined id or event id) |
 | GET | `/my-events?email=` | Yes | Events created by the user |
 
-Event `eventType` must be one of `cleanup`, `tree-planting`, `food-drive`,
-`education`, `fundraiser`, `health`, `community`, or `other`. `eventDate` must
-be a valid `YYYY-MM-DD` date.
+Event `eventType` must be one of `Cleanup`, `Plantation`, `Donation`, `Food Drive`,
+`Education`, `Health`, `Fundraiser`, `Community`, or `Other`. Lowercase and
+hyphenated aliases such as `cleanup`, `tree-planting`, and `food-drive` are also
+accepted and normalized automatically. `eventDate` must be a valid
+`YYYY-MM-DD` date.
 
 For protected routes, the email in the token must match the email in the query/body.
 
@@ -180,7 +182,7 @@ For protected routes, the email in the token must match the email in the query/b
 $eventBody = @{
   title = "Community Cleanup"
   description = "Help clean the park"
-  eventType = "cleanup"
+  eventType = "Cleanup"
   thumbnail = "https://example.com/image.png"
   location = "Central Park"
   eventDate = "2026-12-01"
