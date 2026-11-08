@@ -63,7 +63,12 @@ const client = new MongoClient(process.env.MONGODB_URI, {
     strict: true,
     deprecationErrors: true,
   },
+  serverSelectionTimeoutMS: 15000,
+  connectTimeoutMS: 15000,
 });
+
+let databaseReady = false;
+let serverStarted = false;
 
 // ---------- Helpers ----------
 
@@ -255,10 +260,28 @@ app.get("/", (req, res) => {
   res.send("Kindred Foundation server is running");
 });
 
+app.get("/health", (req, res) => {
+  if (!databaseReady) {
+    return res.status(503).send({
+      status: "starting",
+      database: "connecting",
+    });
+  }
+
+  res.send({ status: "ok", database: "connected" });
+});
+
 async function run() {
   try {
+    if (!serverStarted) {
+      serverStarted = true;
+      app.listen(port, () => {
+        console.log(`Server running on port ${port}`);
+      });
+    }
     await client.connect();
     console.log("Connected to MongoDB");
+    databaseReady = true;
 
     const db = client.db(dbName);
     const eventsCollection = db.collection("events");
@@ -278,10 +301,6 @@ async function run() {
     } catch (error) {
       console.warn("Could not create joinedEvents unique index:", error.message);
     }
-
-    app.get("/health", async (req, res) => {
-      res.send({ status: "ok", database: "connected" });
-    });
 
     // ---------- Better Auth (exposed at /api/auth) ----------
     const auth = betterAuth({
@@ -739,12 +758,10 @@ async function run() {
       });
     });
 
-    app.listen(port, () => {
-      console.log(`Server running on port ${port}`);
-    });
   } catch (error) {
     console.error("Failed to start server:", error);
-    process.exit(1);
+    databaseReady = false;
+    setTimeout(run, 10000);
   }
 }
 
